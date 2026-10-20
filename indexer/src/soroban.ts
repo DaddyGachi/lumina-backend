@@ -39,6 +39,16 @@
  * public RPC endpoints are more permissive than Horizon, but the same guard
  * prevents accidental burst traffic during backfill or a large contract list.
  * Override with the environment variable of the same name.
+ *
+ * `SOROBAN_REQUEST_TIMEOUT_MS` (default 10 s, the same as Horizon's) — how long
+ * one JSON-RPC call may take, response body included. Event polling runs in the
+ * same loop as ledger indexing, so a node that accepts a call and never answers
+ * would otherwise stop ledger indexing too, for as long as the platform's own
+ * fetch timeout (five minutes in Node) — and a call already hanging stays hung
+ * after the node recovers. The clock starts when the call is made, so it also
+ * covers the call's wait for the pacer above, which for these sequential calls
+ * is at most one interval. The chaos suite's `soroban-hanging` scenario is the
+ * measurement: see docs/CHAOS_TESTING.md.
  */
 import { scValToNative, StrKey, xdr } from '@stellar/stellar-sdk';
 import { sorobanRequestDuration, sorobanRequests } from './metrics';
@@ -171,6 +181,7 @@ function decodeScValLegacy(base64: string): unknown {
 }
 
 const SOROBAN_MIN_REQUEST_INTERVAL_MS = parseInt(process.env.SOROBAN_MIN_REQUEST_INTERVAL_MS ?? '100', 10);
+const SOROBAN_REQUEST_TIMEOUT_MS = parseInt(process.env.SOROBAN_REQUEST_TIMEOUT_MS ?? '10000', 10);
 
 const { postJson } = createThrottle({
   name: 'soroban',
@@ -184,12 +195,11 @@ const { postJson } = createThrottle({
 async function rpcCall<T>(rpcUrl: string, method: string, params: Record<string, unknown>): Promise<T> {
   const stopTimer = sorobanRequestDuration.startTimer();
   try {
-    const body = await postJson<{ result?: T; error?: { message: string } }>(rpcUrl, {
-      jsonrpc: '2.0',
-      id: 1,
-      method,
-      params,
-    });
+    const body = await postJson<{ result?: T; error?: { message: string } }>(
+      rpcUrl,
+      { jsonrpc: '2.0', id: 1, method, params },
+      { signal: AbortSignal.timeout(SOROBAN_REQUEST_TIMEOUT_MS) }
+    );
     if (body.error) {
       sorobanRequests.inc({ method, outcome: 'error' });
       stopTimer();

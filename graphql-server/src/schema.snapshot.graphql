@@ -434,6 +434,33 @@ type Query {
   ): Asset
 
   """
+  Account balance history for an asset over time.
+
+  Derives balances by replaying balance-affecting operations from the operations table.
+  Default range is 30 days, maximum is 90 days.
+  """
+  accountBalanceHistory(
+    """Network to read; defaults to the primary network configured for this deployment."""
+    network: Network
+    """
+    Account address to get balance history for.
+    """
+    address: String!
+    """
+    Asset to track: "CODE:ISSUER", or "XLM" for native. Defaults to XLM.
+    """
+    asset: String = "XLM"
+    """
+    Range start (ISO-8601). Defaults to 30 days before `to`.
+    """
+    from: String
+    """
+    Range end (ISO-8601). Defaults to now.
+    """
+    to: String
+  ): BalanceHistory!
+
+  """
   How far behind the chain this API data is, for one network.
 
   Advisory: it measures lag, it does not guarantee freshness. An unreachable
@@ -805,6 +832,8 @@ type Account {
     """Maximum page size is 100. Larger limits are rejected."""
     limit: Int = 10
   ): [Operation!]
+  """Signers on this account, heaviest first; empty until the indexer has recorded any."""
+  signers: [Signer!]!
 }
 
 """

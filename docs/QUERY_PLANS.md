@@ -346,7 +346,12 @@ legible rather than suspicious.
 
 ## Recommended DDL (not applied)
 
-Recorded, not executed — this pass changes no index and no query.
+Recorded, not executed — this pass changes no index and no query. Migration
+019 later applied the `operations` part, network-first and measured against
+real mainnet traffic: `(network, ledger DESC, id DESC)` and
+`(network, source_account, ledger DESC, id DESC)`, with the unused asset and
+`details` indexes dropped. See
+[OPERATIONS_INDEX_REVIEW.md](OPERATIONS_INDEX_REVIEW.md).
 
 ```sql
 -- op.first-page, op.cursor-page — the ordering every operations query asks

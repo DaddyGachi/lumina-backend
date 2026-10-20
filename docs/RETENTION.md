@@ -100,7 +100,7 @@ pruning code:
 | ---------------------------- | -------- | ---------------------------------------------------------- |
 | `ledgers`                    | yes      | One row per closed ledger, about 17,280/day per network. Growth and the `closed_at` index are measured in [LEDGERS_INDEX_REVIEW.md](LEDGERS_INDEX_REVIEW.md#growth). |
 | `transactions`               | yes      |                                                              |
-| `operations`                 | yes      | The fastest-growing table in the schema                     |
+| `operations`                 | yes      | The fastest-growing table in the schema: 6–7 million rows and ~14 GB a day per mainnet network, more than the prune's defaults remove (200,000 rows an hour). See [OPERATIONS_INDEX_REVIEW.md](OPERATIONS_INDEX_REVIEW.md#growth). |
 | `contract_events`            | yes      |                                                              |
 | `custom_events`              | yes      |                                                              |
 | `account_state_history`      | yes      | Pruned on `recorded_at` (when the copy was stored), not chain time. The window bounds how far back `account(asOfLedger:)` can answer, once pruning runs. See the caveat on pruning status in [ACCOUNT_STATE_HISTORY.md](ACCOUNT_STATE_HISTORY.md#window-how-far-back-it-reaches). |

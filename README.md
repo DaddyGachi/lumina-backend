@@ -290,6 +290,24 @@ measurements, the multi-network index that was measured and rejected, and the
 growth/retention numbers are in
 [docs/LEDGERS_INDEX_REVIEW.md](docs/LEDGERS_INDEX_REVIEW.md).
 
+`operations` is the table the indexer writes most and the API reads most. Its
+audit replays real mainnet ledgers through `indexLedger`, runs every API query
+over the table, and measures a retention round:
+
+```bash
+npm run audit:operations -- fetch 1000     # cache mainnet ledgers from Horizon (once)
+npm run audit:operations -- run <label>    # replay, read, prune and EXPLAIN on a scratch database
+npm run audit:operations -- report         # read-only stats; safe on a deployment
+psql $DATABASE_URL -f db/audit/operations.sql   # the same report, without Node
+```
+
+That review replaced nine secondary indexes with seven (migration 019): the
+indexer's WAL fell 54% and the table's indexes 65%, and the operations listing
+went from a sequential scan to 134 buffers. It also found that at its defaults
+the retention prune removes fewer operations an hour than mainnet adds. The
+measurements and the growth numbers are in
+[docs/OPERATIONS_INDEX_REVIEW.md](docs/OPERATIONS_INDEX_REVIEW.md).
+
 ## Run with Docker
 
 ```bash
@@ -362,6 +380,7 @@ network, exactly as before.
 | `HORIZON_AUTH_TOKEN`              | unset                                | Optional Bearer token for authenticated Horizon endpoints; allows higher rate limits with paid or self-hosted providers. Never logged                                                                                                               |
 | `HORIZON_TIP_WEIGHT_FACTOR`       | `2`                                  | Relative priority factor for tip vs backfill requests; tip requests get weighted higher to prevent backfill from delaying real-time indexing                                                                                                        |
 | `SOROBAN_RPC_URL`                 | unset                                | Single-network deployments: enables Soroban contract event indexing                                                                                                                                                                                 |
+| `SOROBAN_REQUEST_TIMEOUT_MS`      | `10000`                              | Longest one Soroban RPC call may take. Event polling shares the ledger loop, so without a bound a node that never answers stops ledger indexing too (see [docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md))                                          |
 | `INDEXED_CONTRACT_IDS`            | unset                                | Comma-separated contract IDs to index events for; requires a Soroban RPC URL                                                                                                                                                                        |
 | `REGISTRY_CONTRACT_ID`            | unset                                | Lumina Registry contract to poll for additional contract IDs; inherited by every network, requires a Soroban RPC URL + `REGISTRY_READ_ACCOUNT`                                                                                        |
 | `REGISTRY_READ_ACCOUNT`           | unset                                | Any funded G... account used to simulate the registry's read calls — no secret key needed, simulation doesn't sign or submit. Inherited by every network                                                                              |
@@ -654,6 +673,33 @@ TEST_DATABASE_URL=postgresql://lumina:lumina@localhost:5432/lumina \
 ```
 
 CI runs them against its own Postgres service.
+
+### Contract, chaos and soak tests
+
+Three suites test the services together rather than one at a time. All three
+need `TEST_DATABASE_URL`, and create and drop databases of their own on it; the
+chaos and soak tests also need both services built (`npm run build`), because
+they run them.
+
+```bash
+npm run test:contract       # indexer ↔ GraphQL server agreement on operations.details
+npm run test:chaos          # fail Postgres, Horizon and Soroban RPC; require recovery
+npm run test:soak:detector  # the soak test's leak detector, against known series and a leaking process
+SOAK_DURATION_MS=3600000 npm run test:soak   # the stack under load for an hour; fails on a resource trend
+```
+
+- **Contract** — real mainnet operations, one per shape Horizon returns, written
+  through the indexer and read back through every server reader of
+  `operations.details`. What the two sides agree on is in
+  [docs/OPERATIONS_DETAILS_CONTRACT.md](docs/OPERATIONS_DETAILS_CONTRACT.md).
+- **Chaos** — the whole stack running, with each dependency failed in turn and
+  then together; the services must recover under their own restart policy and
+  nothing else. What each failure does, and how long recovery takes, is in
+  [docs/CHAOS_TESTING.md](docs/CHAOS_TESTING.md).
+- **Soak** — the stack under sustained load, sampling memory, handles and
+  Postgres connections, failing on a sustained upward trend rather than waiting
+  for a crash. Runs weekly in CI (`.github/workflows/soak.yml`); see
+  [docs/SOAK_TESTING.md](docs/SOAK_TESTING.md).
 
 ## License
 

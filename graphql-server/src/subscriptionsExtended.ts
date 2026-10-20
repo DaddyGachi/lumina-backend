@@ -122,7 +122,7 @@ export function createSubscriptionResolvers() {
     newOffer: {
       subscribe: (
         _parent: unknown,
-        args: {
+        _args: {
           network?: string;
           sellingAsset?: string;
           buyingAsset?: string;
@@ -136,7 +136,7 @@ export function createSubscriptionResolvers() {
     contractEvent: {
       subscribe: (
         _parent: unknown,
-        args: {
+        _args: {
           network?: string;
           contractId?: string;
           type?: string;

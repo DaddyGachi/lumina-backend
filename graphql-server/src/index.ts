@@ -27,7 +27,9 @@ import {
   parseAllowAnonymous,
 } from './auth';
 import { buildServerHealth, metricsPlugin, samplePool, serverHealthStatusCode } from './observability';
+import { handlePoolErrors } from './db';
 import {
+  dbPoolErrors,
   listenerConnected,
   metricsContentType,
   renderMetrics,
@@ -108,6 +110,12 @@ const readPool = READ_DATABASE_URL && READ_DATABASE_URL !== DATABASE_URL
       connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT,
     })
   : pool;
+for (const p of new Set([pool, readPool])) {
+  handlePoolErrors(p, err => {
+    dbPoolErrors.inc();
+    log.error({ err: err.message }, 'unexpected PostgreSQL pool client error; pool will replace the client');
+  });
+}
 const schema = makeExecutableSchema({ typeDefs, resolvers });
 
 const notifier = new LedgerNotifier({

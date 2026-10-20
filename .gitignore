@@ -19,3 +19,6 @@ db/explain/plans/
 
 # Trustlines audit: cached Horizon operations, re-fetched by `npm run audit:trustlines -- fetch`.
 db/audit/.cache/
+
+# Stack tests (chaos, soak): service logs and recorded results, written per run.
+test/.artifacts/

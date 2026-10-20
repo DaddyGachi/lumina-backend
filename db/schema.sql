@@ -100,12 +100,28 @@ CREATE TABLE IF NOT EXISTS operations (
     CONSTRAINT operations_source_account_check    CHECK (source_account <> '')
 );
 
+-- Every index here names its reader; db/migrations/019_operations_index_review.sql
+-- and docs/OPERATIONS_INDEX_REVIEW.md have the measurements behind the set.
+--
+-- transaction_hash: Transaction.operations, and the foreign-key check each
+-- transactions row deleted by the retention prune makes against this table.
 CREATE INDEX idx_operations_transaction   ON operations (transaction_hash);
-CREATE INDEX idx_operations_source        ON operations (source_account);
+-- A rare operation type; a common one is found faster by walking ledger order.
 CREATE INDEX idx_operations_type          ON operations (type);
+-- The retention prune, balance history and the asset volume series: time ranges.
 CREATE INDEX idx_operations_created_at    ON operations (created_at DESC);
--- GIN index for JSONB queries (e.g. filter by "to" address in payment details)
-CREATE INDEX idx_operations_details       ON operations USING GIN (details);
+-- The listing's keyset order, so a page is the next 20 rows rather than a
+-- sort of the network; also one ledger's operations for the subscription replay.
+CREATE INDEX idx_operations_network_ledger
+    ON operations (network, ledger DESC, id DESC);
+-- An account's operations, already in the listing's order.
+CREATE INDEX idx_operations_network_source_ledger
+    ON operations (network, source_account, ledger DESC, id DESC);
+-- accountLifecycle's containment match, over the two operation types it reads
+-- rather than over every key of every operation.
+CREATE INDEX idx_operations_lifecycle
+    ON operations USING GIN (details jsonb_path_ops)
+    WHERE type IN ('create_account', 'account_merge');
 
 -- Defined for parity with db/migrations/006_partition_operations.sql, which
 -- also creates it — the parity check diffs the two dumps, so the definition has
@@ -438,17 +454,10 @@ CREATE INDEX IF NOT EXISTS idx_transactions_memo_trgm
     ON transactions USING GIN (memo gin_trgm_ops)
     WHERE memo IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_operations_asset_code
-    ON operations ((details->>'asset_code'))
-    WHERE details->>'asset_code' IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_operations_asset_issuer
-    ON operations ((details->>'asset_issuer'))
-    WHERE details->>'asset_issuer' IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_operations_asset_type
-    ON operations ((details->>'asset_type'))
-    WHERE details->>'asset_type' IS NOT NULL;
+-- Migration 004 also built expression indexes on operations' asset_code,
+-- asset_issuer and asset_type. Migration 019 dropped them: the asset filter
+-- matches three roles with an OR, which no single-role index can serve, so
+-- they were never read. See docs/OPERATIONS_INDEX_REVIEW.md.
 
 -- ─── API Keys ─────────────────────────────────────────────────────────────────
 

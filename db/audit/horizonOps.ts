@@ -25,10 +25,22 @@ export interface OpsCache {
   ops: HorizonOperation[];
 }
 
-/** GET a Horizon URL as JSON, waiting out a 429 rather than failing. */
+/**
+ * GET a Horizon URL as JSON, waiting out a 429 rather than failing. A dropped
+ * connection is retried too, a bounded number of times: a long walk (the
+ * operations audit fetches thousands of pages) otherwise dies on one blip.
+ */
 export async function horizonGet<T>(url: string): Promise<T> {
-  for (;;) {
-    const res = await fetch(url);
+  for (let failures = 0; ;) {
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      if (++failures > 5) throw err;
+      process.stderr.write(`request failed (${err instanceof Error ? err.message : err}), retrying in ${failures * 5}s\n`);
+      await new Promise(r => setTimeout(r, failures * 5_000));
+      continue;
+    }
     if (res.status === 429) {
       const wait = Number(res.headers.get('retry-after') ?? 10);
       process.stderr.write(`rate limited, waiting ${wait}s\n`);

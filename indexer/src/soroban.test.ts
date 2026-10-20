@@ -29,6 +29,17 @@ function mockFetchOnce(body: unknown, ok = true) {
   })) as unknown as typeof fetch;
 }
 
+test('every RPC call is bounded by a timeout, so a node that never answers cannot hold the indexer loop', async () => {
+  let signal: AbortSignal | null | undefined;
+  (global as unknown as { fetch: typeof fetch }).fetch = (async (_url: unknown, init?: RequestInit) => {
+    signal = init?.signal;
+    return { ok: true, status: 200, json: async () => ({ result: { sequence: 7 } }) };
+  }) as unknown as typeof fetch;
+  assert.equal(await getLatestLedgerSequence('https://rpc.example.com'), 7);
+  assert.ok(signal instanceof AbortSignal, 'the request carries an abort signal');
+  assert.equal(signal.aborted, false);
+});
+
 test('getEvents returns latestLedger=startLedger without making a request when no contract IDs are given', async () => {
   let called = false;
   (global as unknown as { fetch: typeof fetch }).fetch = (async () => {

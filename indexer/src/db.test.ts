@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import type { Pool, PoolClient } from 'pg';
 import {
@@ -77,6 +78,16 @@ test('samplePoolSaturation publishes per-pool totals, idles and waiters', async 
   assert.equal(await valueFor('lumina_indexer_db_pool_connections_total', 'read'), 3);
   assert.equal(await valueFor('lumina_indexer_db_pool_connections_idle', 'write'), 2);
   assert.equal(await valueFor('lumina_indexer_db_pool_waiting', 'read'), 2);
+});
+
+test('a pooled connection dying while checked out does not raise an unhandled error', async () => {
+  // pg-pool drops its own listener while a client is checked out, so without
+  // one of ours a backend killed mid-transaction crashed the indexer.
+  const pool = createPool('postgresql://localhost:5432/lumina');
+  const client = new EventEmitter();
+  pool.emit('connect', client);
+  assert.doesNotThrow(() => client.emit('error', new Error('Connection terminated unexpectedly')));
+  await pool.end();
 });
 
 function makeFakeClient(opts: { failOn?: string } = {}) {
@@ -403,6 +414,20 @@ test('insertContractEvents writes one row per event', async () => {
   assert.match(queries[0]!, /INSERT INTO contract_events/);
   assert.match(queries[1]!, /INSERT INTO contract_events/);
   assert.match(queries[2]!, /pg_notify/);
+});
+
+test('insertContractEvents stores an i128 amount as decimal text rather than failing the batch', async () => {
+  // scValToNative decodes an i128 as a bigint. JSON.stringify throws on one, so
+  // a single token transfer used to fail every poll and pin the event cursor.
+  const values: unknown[][] = [];
+  const pool = {
+    query: async (sql: SqlInput) => {
+      if (typeof sql === 'object' && 'values' in sql && sql.values) values.push(sql.values);
+      return { rows: [] };
+    },
+  } as unknown as Pool;
+  await insertContractEvents(pool, 'mainnet', [{ ...event, value: { amount: 170141183460469231731687303715884105727n } }]);
+  assert.equal(values[0]![7], '{"amount":"170141183460469231731687303715884105727"}');
 });
 
 test('insertContractEvents is a no-op for an empty list', async () => {

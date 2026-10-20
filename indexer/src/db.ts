@@ -4,7 +4,7 @@ import type { ContractEvent, ContractStorageEntry } from './soroban';
 import { notifyIndexed } from './notify';
 import { subsystem } from './logger';
 import { dbPoolConnectionsIdle, dbPoolConnectionsTotal, dbPoolWaiting, indexerPoolErrors } from './metrics';
-import { configurePoolWithPreparedStatements, PREPARED_STATEMENTS } from './preparedStatements';
+import { PREPARED_STATEMENTS } from './preparedStatements';
 
 const log = subsystem('db');
 import { parseContractSchema, type ContractSchema } from './customSchema';
@@ -94,10 +94,15 @@ export interface Pools {
  * listener that is an unhandled `'error'` event — the process dies — so the
  * handler logs it and counts it; the pool replaces the client itself.
  *
- * The `role` labels that counter and decides whether the hot-path write
- * prepared statements are installed on new connections — a read-pool
- * connection never runs them, and preparing them there would only make
- * checkout slower.
+ * The `role` labels that counter.
+ *
+ * A client checked out of the pool has no such listener: pg-pool removes its
+ * own while the client is in use. So a connection that dies inside a ledger
+ * transaction — a Postgres restart, `pg_terminate_backend` — raised the same
+ * unhandled event on the client and killed the process mid-write. The
+ * statement in flight already rejects with that error, which rolls the ledger
+ * back and sends it to the retry path, and `release()` discards a client that
+ * is no longer queryable; the client listener only has to exist.
  */
 export function createPool(databaseUrl: string, options?: PoolConfig, role: DbPoolRole = 'write'): Pool {
   const pool = new Pool({ connectionString: databaseUrl, ...options });
@@ -105,9 +110,9 @@ export function createPool(databaseUrl: string, options?: PoolConfig, role: DbPo
     indexerPoolErrors.inc({ pool: role });
     log.error({ pool: role, err: err.message }, 'unexpected PostgreSQL pool client error; pool will replace the client');
   });
-  if (role === 'write') {
-    configurePoolWithPreparedStatements(pool);
-  }
+  pool.on('connect', client => {
+    client.on('error', () => undefined);
+  });
   return pool;
 }
 
@@ -717,7 +722,10 @@ export async function insertContractEvents(
           event.createdAt,
           event.pagingToken,
           event.topics,
-          event.value === undefined ? null : JSON.stringify(event.value),
+          // An i128 token amount decodes as a bigint, which plain JSON.stringify
+          // throws on: the batch then never lands and the event cursor never
+          // moves past it. Stored as decimal text, like contract storage values.
+          event.value === undefined ? null : JSON.stringify(event.value, bigintReplacer),
           event.transactionHash,
           network,
         ],

@@ -37,7 +37,6 @@
  *   <NAME>_REGISTRY_NETWORK_PASSPHRASE — Overrides the passphrase used for this network's registry simulation (default: that network's own)
  */
 
-import type { Pool } from 'pg';
 import {
   createPool,
   getAccountsNeedingRefresh,
