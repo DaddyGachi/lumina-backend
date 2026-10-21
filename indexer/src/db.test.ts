@@ -257,9 +257,11 @@ test('getNextLedgerForAudit advances by indexed sequence and wraps to the first 
 
   assert.equal(await getNextLedgerForAudit(pool, 'testnet', 900), 100);
   assert.equal(queries.length, 2);
-  assert.match(queries[0]!.sql, /sequence > \$2 ORDER BY sequence ASC LIMIT 1/);
-  assert.deepEqual(queries[0]!.params, ['testnet', 900]);
-  assert.match(queries[1]!.sql, /WHERE network = \$1 ORDER BY sequence ASC LIMIT 1/);
+  assert.match(queries[0]!.sql, /ORDER BY sequence DESC LIMIT \$2/);
+  assert.match(queries[0]!.sql, /sequence > \$3 ORDER BY sequence ASC LIMIT 1/);
+  assert.deepEqual(queries[0]!.params, ['testnet', 100, 900]);
+  assert.match(queries[1]!.sql, /ORDER BY sequence DESC LIMIT \$2/);
+  assert.deepEqual(queries[1]!.params, ['testnet', 100]);
 });
 
 test('getLedgerRowCounts counts rows for one network and ledger', async () => {

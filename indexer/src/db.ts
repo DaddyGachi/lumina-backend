@@ -162,17 +162,27 @@ export async function getEarliestIndexedLedger(pool: Pool, network: string): Pro
   return rows[0]?.min ? Number(rows[0].min) : 0;
 }
 
-/** Returns the next ledger to audit, wrapping to the beginning when needed. */
-export async function getNextLedgerForAudit(pool: Pool, network: string, afterSequence: number): Promise<number | null> {
+/** Returns the next ledger in a bounded recent window, wrapping when needed. */
+export async function getNextLedgerForAudit(
+  pool: Pool,
+  network: string,
+  afterSequence: number,
+  windowSize = 100
+): Promise<number | null> {
   const next = await pool.query<{ sequence: string }>(
-    'SELECT sequence FROM ledgers WHERE network = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT 1',
-    [network, afterSequence]
+    `WITH recent AS (
+       SELECT sequence FROM ledgers WHERE network = $1 ORDER BY sequence DESC LIMIT $2
+     )
+     SELECT sequence FROM recent WHERE sequence > $3 ORDER BY sequence ASC LIMIT 1`,
+    [network, windowSize, afterSequence]
   );
   if (next.rows[0]) return Number(next.rows[0].sequence);
 
   const first = await pool.query<{ sequence: string }>(
-    'SELECT sequence FROM ledgers WHERE network = $1 ORDER BY sequence ASC LIMIT 1',
-    [network]
+    `SELECT sequence FROM (
+       SELECT sequence FROM ledgers WHERE network = $1 ORDER BY sequence DESC LIMIT $2
+     ) recent ORDER BY sequence ASC LIMIT 1`,
+    [network, windowSize]
   );
   return first.rows[0] ? Number(first.rows[0].sequence) : null;
 }
