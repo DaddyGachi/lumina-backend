@@ -162,6 +162,39 @@ export async function getEarliestIndexedLedger(pool: Pool, network: string): Pro
   return rows[0]?.min ? Number(rows[0].min) : 0;
 }
 
+/** Returns the next ledger to audit, wrapping to the beginning when needed. */
+export async function getNextLedgerForAudit(pool: Pool, network: string, afterSequence: number): Promise<number | null> {
+  const next = await pool.query<{ sequence: string }>(
+    'SELECT sequence FROM ledgers WHERE network = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT 1',
+    [network, afterSequence]
+  );
+  if (next.rows[0]) return Number(next.rows[0].sequence);
+
+  const first = await pool.query<{ sequence: string }>(
+    'SELECT sequence FROM ledgers WHERE network = $1 ORDER BY sequence ASC LIMIT 1',
+    [network]
+  );
+  return first.rows[0] ? Number(first.rows[0].sequence) : null;
+}
+
+/** Counts the indexed transaction and operation rows for one ledger. */
+export async function getLedgerRowCounts(
+  pool: Pool,
+  network: string,
+  sequence: number
+): Promise<{ transactions: number; operations: number }> {
+  const { rows } = await pool.query<{ transactions: string; operations: string }>(
+    `SELECT
+       (SELECT COUNT(*) FROM transactions WHERE network = $1 AND ledger = $2)::text AS transactions,
+       (SELECT COUNT(*) FROM operations WHERE network = $1 AND ledger = $2)::text AS operations`,
+    [network, sequence]
+  );
+  return {
+    transactions: Number(rows[0]?.transactions ?? 0),
+    operations: Number(rows[0]?.operations ?? 0),
+  };
+}
+
 export interface BackfillProgressRecord {
   network: string;
   startLedger: number;

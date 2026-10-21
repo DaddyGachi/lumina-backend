@@ -43,6 +43,8 @@ import {
   getEarliestIndexedLedger,
   getLatestIndexedEventLedger,
   getLatestIndexedLedger,
+  getNextLedgerForAudit,
+  getLedgerRowCounts,
   getLatestTradePagingToken,
   getOrInitBackfillProgress,
   getTrackedContractStorageKeys,
@@ -85,7 +87,9 @@ import {
   sorobanRetentionWindowExceeded,
   deadLetterQueueSize,
   horizonPaused,
+  ledgerCountDiscrepancies,
 } from './metrics';
+import { findLedgerCountDiscrepancies } from './ledgerIntegrity';
 import {
   aggregateNetworkStates,
   buildDebugConfiguration,
@@ -137,6 +141,7 @@ let leaderLost = false;
 
 const DATABASE_URL = config.databaseUrl;
 const POLL_INTERVAL_MS = config.pollIntervalMs;
+const INTEGRITY_AUDIT_INTERVAL_MS = 60_000;
 const START_LEDGER = config.startLedger;
 const DB_WRITE_POOL_MAX = config.dbWritePoolMax;
 const DB_READ_POOL_MAX = config.dbReadPoolMax;
@@ -244,6 +249,8 @@ interface NetworkLoop {
   eventsCursor: number;
   tradesCursor: string;
   loopTick: number;
+  integrityCursor: number;
+  lastIntegrityAuditAt: number;
   discoveredContractIds: string[];
   accountCache: Map<string, number>;
   accountCacheOrder: string[];
@@ -282,6 +289,8 @@ function createLoop(network: NetworkConfig, registries: Map<string, RegistryConf
     eventsCursor: 0,
     tradesCursor: '',
     loopTick: 0,
+    integrityCursor: 0,
+    lastIntegrityAuditAt: 0,
     discoveredContractIds: [],
     accountCache: new Map<string, number>(),
     accountCacheOrder: [],
@@ -358,6 +367,30 @@ async function fetchAndIndexLedger(loop: NetworkLoop, sequence: number, isBackfi
     routine.success(
       { network: name, ledger: sequence, transactions: transactions.length, operations: operations.length },
       'ledger indexed'
+    );
+  }
+}
+
+async function auditOneLedger(loop: NetworkLoop): Promise<void> {
+  const network = loop.network.name;
+  const sequence = await getNextLedgerForAudit(readPool, network, loop.integrityCursor);
+  if (sequence === null) return;
+
+  const [ledger, actual] = await Promise.all([
+    getLedger(loop.network.horizonUrl, sequence),
+    getLedgerRowCounts(readPool, network, sequence),
+  ]);
+  loop.integrityCursor = sequence;
+
+  const expected = {
+    transactions: ledger.successful_transaction_count + ledger.failed_transaction_count,
+    operations: ledger.operation_count,
+  };
+  for (const discrepancy of findLedgerCountDiscrepancies(expected, actual)) {
+    ledgerCountDiscrepancies.inc({ network, entity: discrepancy.entity });
+    log.warn(
+      { network, ledger: sequence, entity: discrepancy.entity, expected: discrepancy.expected, actual: discrepancy.actual },
+      'sampled ledger count differs from Horizon'
     );
   }
 }
@@ -897,6 +930,15 @@ async function runNetworkLoop(loop: NetworkLoop): Promise<void> {
         recordHorizonTip(name, latest, advanced)
       );
       deadLetterQueueSize.set({ network: name }, await countPendingDeadLetters(readPool, name));
+      if (Date.now() - loop.lastIntegrityAuditAt >= INTEGRITY_AUDIT_INTERVAL_MS) {
+        loop.lastIntegrityAuditAt = Date.now();
+        try {
+          await auditOneLedger(loop);
+        } catch (err) {
+          indexingErrors.inc({ loop: 'integrity' });
+          log.error({ network: name, err: message(err) }, 'sampled ledger integrity audit failed');
+        }
+      }
 
       if (isShuttingDown) break;
       await pollContractEvents(loop);
