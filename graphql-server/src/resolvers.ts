@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { GraphQLError } from 'graphql';
 import {
   ACCOUNT_ORDER_NAMES,
   ACCOUNT_ORDERS,
@@ -11,6 +12,7 @@ import {
   getEventsByContract,
   getLatestLedgerFromDb,
   getLedgerBySequence,
+  getLedgerCoverage,
   getLedgers,
   getOperations,
   getOperationsByTransactionHash,
@@ -53,6 +55,7 @@ import { computeBalanceHistory } from './balanceHistory';
 import { parseAsOfLedger } from './accountHistory';
 import { memoizeRequestQuery } from './requestMemo';
 import { getEffects } from './effects';
+import { ERROR_CODES } from './errorCodes';
 
 export interface BaseContext {
   pool: Pool;
@@ -494,6 +497,22 @@ export const resolvers = {
       return memoizeRequestQuery(ctx.queryMemo, 'ledger', args, async () => {
         const network = networkArgument(args, ctx);
         return getLedgerBySequence(ctx.pool, network.name, args.sequence);
+      });
+    },
+
+    async ledgerCoverage(
+      _: unknown,
+      args: { network?: string | null; startLedger: number; endLedger: number },
+      ctx: Context
+    ) {
+      return memoizeRequestQuery(ctx.queryMemo, 'ledgerCoverage', args, async () => {
+        if (!Number.isSafeInteger(args.startLedger) || !Number.isSafeInteger(args.endLedger) || args.startLedger < 1 || args.endLedger < args.startLedger) {
+          throw new GraphQLError('Ledger coverage requires positive bounds with endLedger greater than or equal to startLedger.', {
+            extensions: { code: ERROR_CODES.BAD_USER_INPUT },
+          });
+        }
+        const network = networkArgument(args, ctx);
+        return getLedgerCoverage(ctx.pool, network.name, args.startLedger, args.endLedger);
       });
     },
 
